@@ -2,7 +2,7 @@
 
 Convert SMILES strings into 3D Cartesian coordinates (`.xyz`) for small organic molecules. Two ways to use it:
 
-- **Web page:** runs entirely in your browser; nothing to install. (https://harukatakenaka.github.io/smiles_to_xyz/index.html) (https://harukatakenaka.github.io/smiles_to_xyz/index.html)
+- **Web page:** runs entirely in your browser; nothing to install. (https://harukatakenaka.github.io/smiles_to_xyz/index.html) 
 - **Jupyter notebook:** RDKit-based, for batch work and scripting.
 
 The geometries are force-field quality. They are intended as starting structures for xtb or DFT optimization, not as final geometries.
