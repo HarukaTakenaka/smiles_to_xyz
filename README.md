@@ -134,6 +134,6 @@ Stereocenters (`@`, `@@`) and double-bond geometry (`/`, `\`) written in the SMI
 - Spin multiplicity is not determined. Ordinary closed-shell organics are singlets; set radicals and triplets by hand.
 - The tools are meant for small organic molecules. Large or highly flexible systems will work, but the single structure kept may be far from the global minimum.
 
-## License and credits
+## Credits
 
-The web page uses OpenChemLib (BSD-3-Clause), loaded from jsDelivr. The notebook uses RDKit (BSD-3-Clause). Add your own license for this repository; MIT is a common choice for small tools.
+The web page uses OpenChemLib (BSD-3-Clause), loaded from jsDelivr. The notebook uses RDKit (BSD-3-Clause). 
