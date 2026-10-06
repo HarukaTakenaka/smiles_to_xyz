@@ -80,6 +80,27 @@ details{margin-top:12px} summary{cursor:pointer;color:var(--muted);font-size:.9r
 footer{margin-top:26px;color:var(--muted);font-size:.85rem;max-width:80ch}
 @media (max-width:860px){.viewer{aspect-ratio:1/1}}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+.import{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:14px;padding-top:14px;border-top:1px solid var(--rule)}
+.import .hint{margin:0}
+#in-panel{transition:background-color .15s}
+#in-panel.drag{outline:2px dashed var(--accent);outline-offset:-7px;background:color-mix(in srgb,var(--accent) 6%,var(--panel))}
+.mapper{margin-top:14px;padding:14px;border:1px solid var(--rule);border-radius:8px;background:var(--field)}
+.mapper[hidden]{display:none}
+.map-head{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:baseline;margin-bottom:12px;overflow-wrap:anywhere}
+.map-head .hint{margin:0}
+.map-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px 14px;margin-bottom:12px}
+.map-grid label{display:flex;flex-direction:column;gap:4px;font-size:.86rem;font-weight:500;min-width:0}
+.map-grid label.chk{flex-direction:row;align-items:center;gap:8px;font-weight:400;grid-column:1/-1}
+.map-grid label[hidden]{display:none}
+select{font:14px var(--sans);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink);width:100%;min-width:0}
+.map-prev{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;margin-bottom:12px;background:var(--panel)}
+.map-prev table{border-collapse:collapse;font:12.5px/1.4 var(--mono);width:100%}
+.map-prev th,.map-prev td{padding:5px 8px;border-bottom:1px solid var(--rule);text-align:left;white-space:nowrap;max-width:24ch;overflow:hidden;text-overflow:ellipsis}
+.map-prev th{font-family:var(--sans);font-weight:600;color:var(--muted);font-size:.8rem}
+.map-prev th .tag{display:block;font-weight:600;color:var(--ink)}
+.map-prev .c-smi{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.map-prev .c-lab{background:color-mix(in srgb,var(--ok) 13%,transparent)}
+.map-prev tr:last-child td{border-bottom:none}
 </style>
 </head>
 <body>
@@ -90,7 +111,7 @@ footer{margin-top:26px;color:var(--muted);font-size:.85rem;max-width:80ch}
   </header>
 
   <div class="grid">
-    <section class="panel" aria-labelledby="in-h">
+    <section class="panel" id="in-panel" aria-labelledby="in-h">
       <h2 id="in-h">Molecules</h2>
       <label class="field" for="smi">One per line: SMILES, then an optional name</label>
       <textarea id="smi" spellcheck="false" autocomplete="off">CC(=O)Oc1ccccc1C(=O)O aspirin
@@ -102,6 +123,25 @@ C[C@H](N)C(=O)O L-alanine</textarea>
         <button type="button" data-s="CC(C)Cc1ccc(cc1)[C@@H](C)C(=O)O S-ibuprofen">ibuprofen</button>
         <button type="button" data-s="F/C=C/F E-difluoroethene">E-alkene</button>
         <button type="button" data-s="C[NH3+] methylammonium">cation</button>
+      </div>
+      <div class="import">
+        <input type="file" id="file" accept=".csv,.tsv,.txt,.smi,.xlsx,.xls,.xlsm,.ods" hidden>
+        <button type="button" id="pick" class="small">Import CSV or Excel…</button>
+        <span class="hint">or drop a file onto this panel</span>
+      </div>
+      <div class="mapper" id="mapper" hidden>
+        <div class="map-head"><strong id="map-file"></strong><span class="hint" id="map-count"></span></div>
+        <div class="map-grid">
+          <label id="sheet-wrap" hidden>Sheet <select id="map-sheet"></select></label>
+          <label>SMILES column <select id="map-smi"></select></label>
+          <label>Label column <select id="map-lab"></select></label>
+          <label class="chk"><input type="checkbox" id="map-hdr"> First row holds column names</label>
+        </div>
+        <div class="map-prev"><table id="map-tbl"></table></div>
+        <div class="row">
+          <button type="button" class="primary small" id="map-ok">Load into list</button>
+          <button type="button" class="small" id="map-cancel">Cancel</button>
+        </div>
       </div>
       <div class="opts">
         <label>Conformers to try <input id="nconf" type="number" min="1" max="50" value="10"></label>
@@ -193,7 +233,7 @@ try {
 
 function setStatus(msg, isErr = false) { status.textContent = msg; status.classList.toggle("err", isErr); }
 const cleanErr = (m) => String(m || "").replace(/^Class\$\S+:\s*/, "").replace(/^SmilesParser:\s*/, "");
-const safeName = (s) => (s.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "molecule");
+const safeName = (s) => (s.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "molecule");
 const pause = () => new Promise((r) => setTimeout(r, 0));
 
 function parseInput(text) {
@@ -267,6 +307,204 @@ go.addEventListener("click", async () => {
   const bad = items.length - ok;
   setStatus(`Converted ${ok} of ${items.length}${bad ? ` · ${bad} failed, see the list` : ""}.`, bad > 0 && ok === 0);
   go.disabled = false;
+});
+
+/* ---------- import from CSV / TSV / Excel ---------- */
+const imp = { file: "", sheets: [], rows: [] };
+const inPanel = $("in-panel");
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+$("pick").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) readFile(f); });
+["dragenter", "dragover"].forEach((t) => inPanel.addEventListener(t, (e) => {
+  if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; inPanel.classList.add("drag");
+}));
+inPanel.addEventListener("dragleave", (e) => { if (!inPanel.contains(e.relatedTarget)) inPanel.classList.remove("drag"); });
+inPanel.addEventListener("drop", (e) => {
+  e.preventDefault(); inPanel.classList.remove("drag");
+  const f = e.dataTransfer.files[0]; if (f) readFile(f);
+});
+// a file dropped elsewhere on the page should not replace the page
+["dragover", "drop"].forEach((t) => window.addEventListener(t, (e) => { if (hasFiles(e)) e.preventDefault(); }));
+
+let xlsxLoading = null;
+function loadSheetJS() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return xlsxLoading ||= new Promise((resolve, reject) => {
+    const srcs = ["https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+                  "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"];
+    const next = (i) => {
+      if (i >= srcs.length) { xlsxLoading = null; reject(new Error("the Excel reader could not load. Save the sheet as CSV and import that instead.")); return; }
+      const sc = document.createElement("script"); sc.src = srcs[i];
+      sc.onload = () => (window.XLSX ? resolve(window.XLSX) : next(i + 1));
+      sc.onerror = () => { sc.remove(); next(i + 1); };
+      document.head.append(sc);
+    };
+    next(0);
+  });
+}
+
+function sniffDelimiter(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim()).slice(0, 10);
+  let best = null, bestScore = 0;
+  for (const d of ["\t", ",", ";", "|"]) {
+    const counts = lines.map((l) => { let n = 0, q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === d && !q) n++; } return n; });
+    const min = Math.min(...counts);
+    if (min > 0 && min >= bestScore) { best = d; bestScore = min; }
+  }
+  return best;
+}
+function parseDelimited(text, d) {
+  const rows = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += ch;
+    } else if (ch === '"' && cell === "") q = true;
+    else if (ch === d) { row.push(cell); cell = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell); rows.push(row); row = []; cell = "";
+    } else cell += ch;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+// .smi style: SMILES, whitespace, then the rest of the line as the name
+const parseWhitespace = (text) => text.split(/\r?\n/).map((l) => { const t = l.trim(), m = t.match(/^(\S+)\s+(.*)$/); return m ? [m[1], m[2]] : [t]; });
+function cleanRows(rows) {
+  const out = rows.map((r) => r.map((c) => String(c ?? "").replace(/\s+/g, " ").trim())).filter((r) => r.some(Boolean));
+  const w = Math.max(0, ...out.map((r) => r.length));
+  out.forEach((r) => { while (r.length < w) r.push(""); });
+  return out;
+}
+
+async function readFile(f) {
+  const ext = (f.name.match(/\.([^.]+)$/) || [, ""])[1].toLowerCase();
+  setStatus(`Reading ${f.name}…`);
+  try {
+    let sheets;
+    if (["xlsx", "xls", "xlsm", "xlsb", "ods"].includes(ext)) {
+      const XLSX = await loadSheetJS();
+      const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+      sheets = wb.SheetNames.map((n) => ({ name: n, rows: cleanRows(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: "", blankrows: false })) }));
+    } else {
+      const text = (await f.text()).replace(/^\uFEFF/, "");
+      const d = ext === "tsv" ? "\t" : ext === "csv" ? (sniffDelimiter(text) || ",") : sniffDelimiter(text);
+      sheets = [{ name: f.name, rows: cleanRows(d ? parseDelimited(text, d) : parseWhitespace(text)) }];
+    }
+    sheets = sheets.filter((sh) => sh.rows.length);
+    if (!sheets.length) throw new Error("the file has no rows.");
+    imp.file = f.name; imp.sheets = sheets;
+    const sel = $("map-sheet"); sel.textContent = "";
+    sheets.forEach((sh, i) => sel.append(new Option(sh.name, i)));
+    $("sheet-wrap").hidden = sheets.length < 2;
+    // open the sheet that looks most like it holds SMILES
+    let best = 0, bestFit = -1;
+    sheets.forEach((sh, i) => { const f = guessColumns(sh.rows).fit; if (f > bestFit) { bestFit = f; best = i; } });
+    sel.value = best;
+    openSheet(best);
+    setStatus("");
+  } catch (e) {
+    setStatus(`Could not read ${f.name}: ${cleanErr(e.message || e)}`, true);
+  }
+}
+
+const colLetter = (i) => { let s = ""; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+const firstToken = (v) => (v || "").split(" ")[0];
+function looksLikeSmiles(v) {
+  if (!v || /^[-+]?\d*\.?\d+(e[-+]?\d+)?%?$/i.test(v)) return false;
+  try { return OCL.Molecule.fromSmiles(v).getAllAtoms() > 0; } catch { return false; }
+}
+function guessColumns(rows) {
+  const w = rows[0].length, head = rows[0].map((h) => h.toLowerCase());
+  const sample = rows.slice(1, 26), score = [];
+  for (let c = 0; c < Math.min(w, 60); c++) {
+    const vals = sample.map((r) => firstToken(r[c])).filter(Boolean);
+    score[c] = vals.length ? vals.filter(looksLikeSmiles).length / vals.length : 0;
+  }
+  let smi = head.findIndex((h) => /smiles|^smi$/.test(h));
+  if (smi < 0) { const m = Math.max(0, ...score); smi = m > 0 ? score.indexOf(m) : 0; }
+  // prefer a name-like column, then an ID-like one
+  const nameRes = [/^(name|label|title)$/, /\b(name|label|title)\b/, /^(id|identifier|compound|cmpd|molecule|sample)\b/, /\b(id|identifier)\b/];
+  let lab = -1;
+  for (const re of nameRes) { lab = head.findIndex((h, i) => i !== smi && re.test(h)); if (lab >= 0) break; }
+  const hdr = head.some((h) => /smiles|name|label|title|\bid\b|compound/.test(h)) ||
+              (!looksLikeSmiles(firstToken(rows[0][smi])) && (score[smi] || 0) >= 0.5);
+  if (lab < 0 && w === 2) lab = 1 - smi;
+  const fit = (/smiles|^smi$/.test(head[smi] || "") ? 1 : 0) + (score[smi] || 0);
+  return { smi, lab, hdr, fit };
+}
+
+function openSheet(i) {
+  imp.rows = imp.sheets[i].rows;
+  const g = guessColumns(imp.rows);
+  $("map-hdr").checked = g.hdr;
+  fillColumnSelects(g.smi, g.lab);
+  $("map-file").textContent = imp.file + (imp.sheets.length > 1 ? ` · ${imp.sheets[i].name}` : "");
+  $("mapper").hidden = false;
+  renderPreview();
+  $("map-smi").focus();
+}
+function fillColumnSelects(smi, lab) {
+  const hdr = $("map-hdr").checked, rows = imp.rows, w = rows[0].length;
+  const firstData = rows[hdr ? 1 : 0] || [];
+  const text = (c) => {
+    const L = colLetter(c), h = hdr ? rows[0][c] : "", v = firstData[c] || "";
+    const t = h ? `${L}: ${h}` : `Column ${L}${v ? ` (${v})` : ""}`;
+    return t.length > 48 ? t.slice(0, 47) + "…" : t;
+  };
+  const s = $("map-smi"), l = $("map-lab");
+  s.textContent = ""; l.textContent = "";
+  l.append(new Option("None (use the SMILES as the name)", -1));
+  for (let c = 0; c < w; c++) { s.append(new Option(text(c), c)); l.append(new Option(text(c), c)); }
+  s.value = smi; l.value = lab;
+}
+function renderPreview() {
+  const hdr = $("map-hdr").checked, smi = +$("map-smi").value, lab = +$("map-lab").value;
+  const rows = imp.rows, w = Math.min(rows[0].length, 12), data = rows.slice(hdr ? 1 : 0);
+  const cls = (c) => (c === smi ? "c-smi" : c === lab ? "c-lab" : "");
+  const tbl = $("map-tbl"); tbl.textContent = "";
+  const trh = tbl.createTHead().insertRow();
+  for (let c = 0; c < w; c++) {
+    const th = document.createElement("th"); th.className = cls(c);
+    const tag = c === smi ? "SMILES" : c === lab ? "Label" : "";
+    if (tag) { const t = document.createElement("span"); t.className = "tag"; t.textContent = tag; th.append(t); }
+    th.append(hdr && rows[0][c] ? rows[0][c] : colLetter(c));
+    th.title = th.textContent; trh.append(th);
+  }
+  const tb = tbl.createTBody();
+  data.slice(0, 5).forEach((r) => {
+    const tr = tb.insertRow();
+    for (let c = 0; c < w; c++) { const td = tr.insertCell(); td.className = cls(c); td.textContent = r[c]; td.title = r[c]; }
+  });
+  const n = data.filter((r) => firstToken(r[smi])).length;
+  $("map-count").textContent = `${n} row${n === 1 ? "" : "s"} with a value in the SMILES column` +
+    (rows[0].length > w ? ` · preview shows the first ${w} of ${rows[0].length} columns` : "");
+  $("map-ok").disabled = n === 0;
+  $("map-ok").textContent = n ? `Load ${n} into list` : "Load into list";
+}
+$("map-sheet").addEventListener("change", (e) => openSheet(+e.target.value));
+$("map-smi").addEventListener("change", () => {
+  if ($("map-lab").value === $("map-smi").value) $("map-lab").value = -1;
+  renderPreview();
+});
+$("map-lab").addEventListener("change", renderPreview);
+$("map-hdr").addEventListener("change", () => { fillColumnSelects(+$("map-smi").value, +$("map-lab").value); renderPreview(); });
+$("map-cancel").addEventListener("click", () => { $("mapper").hidden = true; setStatus(""); });
+$("map-ok").addEventListener("click", () => {
+  const hdr = $("map-hdr").checked, smi = +$("map-smi").value, lab = +$("map-lab").value;
+  const lines = []; let skipped = 0;
+  for (const r of imp.rows.slice(hdr ? 1 : 0)) {
+    const s = firstToken(r[smi]);
+    if (!s) { skipped++; continue; }
+    const name = lab >= 0 ? r[lab] : "";
+    lines.push(name ? `${s} ${name}` : s);
+  }
+  $("smi").value = lines.join("\n");
+  $("mapper").hidden = true;
+  setStatus(`Loaded ${lines.length} from ${imp.file}` + (skipped ? `; skipped ${skipped} row${skipped === 1 ? "" : "s"} with no SMILES` : "") +
+    `. Press Convert.` + (lines.length > 100 ? " Long lists take a while; fewer conformers per molecule is faster." : ""));
 });
 
 $("clear").addEventListener("click", () => { $("smi").value = ""; $("smi").focus(); });
